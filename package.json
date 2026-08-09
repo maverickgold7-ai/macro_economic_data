@@ -1,0 +1,53 @@
+{
+  "name": "macro-economy-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "backfill": "tsx scripts/ingest.ts backfill",
+    "refresh": "tsx scripts/ingest.ts refresh",
+    "simulate:releases": "tsx scripts/simulate-release-updates.ts",
+    "import:investing": "tsx scripts/import-investing-calendar.ts",
+    "simulate:investing": "tsx scripts/simulate-investing-import.ts",
+    "audit:surprise": "tsx scripts/audit-investing-surprise.ts",
+    "remap:investing": "tsx scripts/remap-investing.ts",
+    "db:push": "tsx -e \"import { ensureSchema, seedCatalog } from './src/ingest/pipeline'; ensureSchema().then(seedCatalog).then(() => console.log('ok'))\""
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^1.31.0",
+    "next": "15.5.23",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "recharts": "^3.10.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.23",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.11",
+    "typescript": "^5"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true,
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.12.2": true
+  }
+}
