@@ -1,4 +1,6 @@
 import type { RawPoint } from "./transforms";
+import { fetchOnsPayeEmploymentChange, fetchOnsPayeMedianPayLevel } from "./ons-paye-rti";
+import { fetchUkLabourMarketBulletinUe } from "./ons-labour-bulletin";
 
 /**
  * ONS public CSV generator — more reliable than the legacy JSON API.
@@ -28,6 +30,7 @@ const SERIES_URI: Record<string, string> = {
   AP2Y: "/employmentandlabourmarket/peopleinwork/employmentandemployeetypes/timeseries/ap2y/unem",
   KAC3: "/employmentandlabourmarket/peopleinwork/earningsandworkinghours/timeseries/kac3/lms", // total pay 3m YoY %
   KAB9: "/employmentandlabourmarket/peopleinwork/earningsandworkinghours/timeseries/kab9/lms",
+  KAI7: "/employmentandlabourmarket/peopleinwork/earningsandworkinghours/timeseries/kai7/lms", // regular pay level £ SA
   KAI8: "/employmentandlabourmarket/peopleinwork/earningsandworkinghours/timeseries/kai8/lms", // regular pay 1m YoY %
   KAI9: "/employmentandlabourmarket/peopleinwork/earningsandworkinghours/timeseries/kai9/lms", // regular pay 3m YoY %
   MGSX: "/employmentandlabourmarket/peoplenotinwork/unemployment/timeseries/mgsx/lms",
@@ -35,6 +38,7 @@ const SERIES_URI: Record<string, string> = {
   DIOP: "/economy/economicoutputandproductivity/output/timeseries/diop/diop",
   K222: "/economy/economicoutputandproductivity/output/timeseries/k222/diop", // IoP total B-E CVMSA
   J5EK: "/businessindustryandtrade/retailindustry/timeseries/j5ek/drsi",
+  J5EC: "/businessindustryandtrade/retailindustry/timeseries/j5ec/drsi",
   ECY4: "/economy/grossdomesticproductgdp/timeseries/ecy4/mgdp",
   ED3C: "/economy/grossdomesticproductgdp/timeseries/ed3c/mgdp",
   ECYX: "/economy/grossdomesticproductgdp/timeseries/ecyx/mgdp", // monthly GDP MoM %
@@ -48,9 +52,24 @@ const SERIES_URI: Record<string, string> = {
 };
 
 export async function fetchOnsSeries(seriesId: string): Promise<RawPoint[]> {
+  if (seriesId === "PAYE_EMP_CHANGE") {
+    return fetchOnsPayeEmploymentChange();
+  }
+  if (seriesId === "PAYE_MEDIAN_PAY") {
+    return fetchOnsPayeMedianPayLevel();
+  }
+
   const uri = SERIES_URI[seriesId];
   if (!uri) throw new Error(`No ONS URI mapping for ${seriesId}`);
 
+  const points = await fetchOnsCsvSeries(uri, seriesId);
+  if (seriesId === "MGSX") {
+    return mergeUkUnemploymentBulletin(points);
+  }
+  return points;
+}
+
+async function fetchOnsCsvSeries(uri: string, seriesId: string): Promise<RawPoint[]> {
   const url = `${GENERATOR}?format=csv&uri=${encodeURIComponent(uri)}`;
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -75,6 +94,27 @@ export async function fetchOnsSeries(seriesId: string): Promise<RawPoint[]> {
     return parseOnsCsv(text);
   }
   throw lastErr ?? new Error(`ONS failed for ${seriesId}`);
+}
+
+async function mergeUkUnemploymentBulletin(points: RawPoint[]): Promise<RawPoint[]> {
+  try {
+    const headline = await fetchUkLabourMarketBulletinUe();
+    if (!headline) return dedupeOnsPoints(points);
+    const map = new Map(points.map((p) => [p.date, p]));
+    const latest = [...map.keys()].sort().at(-1);
+    if (!latest || headline.date >= latest) {
+      map.set(headline.date, headline);
+    }
+    return dedupeOnsPoints([...map.values()]);
+  } catch {
+    return dedupeOnsPoints(points);
+  }
+}
+
+function dedupeOnsPoints(points: RawPoint[]): RawPoint[] {
+  const map = new Map<string, RawPoint>();
+  for (const p of points) map.set(p.date, p);
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function parseOnsCsv(text: string): RawPoint[] {

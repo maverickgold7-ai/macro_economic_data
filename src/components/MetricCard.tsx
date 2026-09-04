@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { formatDelta, formatValue } from "@/lib/format";
+import { formatDelta, formatObsDate, formatValue } from "@/lib/format";
 import clsx from "clsx";
+import { surpriseTone } from "@/lib/surprise";
 
 export interface MetricCardData {
   id: string;
@@ -24,12 +25,20 @@ export interface MetricCardData {
   latest: { date: string; value: number } | null;
   prior: { date: string; value: number } | null;
   delta: number | null;
+  release?: {
+    releasedAt: string;
+    periodDate: string;
+    periodLabel?: string | null;
+  } | null;
+  displayReleasedAt?: string | null;
+  expectedValue?: number | null;
+  surprise?: number | null;
+  priorPeriodValue?: number | null;
 }
 
 export function MetricCard({ metric }: { metric: MetricCardData }) {
   const up = (metric.delta ?? 0) > 0;
   const down = (metric.delta ?? 0) < 0;
-  // For unemployment / claims, up is "worse" — keep neutral coloring by category heuristics
   const invert =
     metric.subcategory.includes("unemployment") ||
     metric.subcategory.includes("claims") ||
@@ -48,6 +57,17 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
         : down
           ? "bad"
           : "neutral";
+
+  const displayDate = metric.displayReleasedAt
+    ? formatObsDate(metric.displayReleasedAt)
+    : metric.latest?.date != null
+      ? formatObsDate(metric.latest.date)
+      : "No data";
+  const dateLabel = metric.displayReleasedAt ? "Released" : "Period";
+
+  const hasConsensus = metric.expectedValue != null;
+  const surpriseTone_ =
+    metric.surprise != null ? surpriseTone(metric.surprise, metric.id, metric.unit) : "neutral";
 
   return (
     <Link
@@ -82,8 +102,30 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
           <div className="font-[family-name:var(--font-mono)] text-3xl font-semibold tracking-tight text-[var(--ink)]">
             {formatValue(metric.latest?.value, metric.unit)}
           </div>
+          {hasConsensus && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs">
+              <span className="text-[var(--muted)]">
+                Cons {formatValue(metric.expectedValue, metric.unit)}
+              </span>
+              {metric.surprise != null && (
+                <span
+                  className={clsx(
+                    "font-medium",
+                    surpriseTone_ === "good" && "text-[var(--up)]",
+                    surpriseTone_ === "bad" && "text-[var(--down)]"
+                  )}
+                >
+                  {formatDelta(metric.surprise, metric.unit)} surprise
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-1 text-xs text-[var(--muted)]">
-            {metric.latest?.date ?? "No data"} · vs prior{" "}
+            {dateLabel} {displayDate}
+            {metric.priorPeriodValue != null && (
+              <> · prior {formatValue(metric.priorPeriodValue, metric.unit)}</>
+            )}
+            {" · "}
             <span
               className={clsx(
                 "font-medium",
@@ -91,7 +133,7 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
                 tone === "bad" && "text-[var(--down)]"
               )}
             >
-              {formatDelta(metric.delta, metric.unit)}
+              {formatDelta(metric.delta, metric.unit)} seq
             </span>
           </div>
         </div>

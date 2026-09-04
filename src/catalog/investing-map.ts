@@ -508,10 +508,15 @@ export const INVESTING_EVENT_RULES: InvestingEventRule[] = [
  * Raw calendar_events.actual stays unscaled.
  */
 export const INVESTING_TO_CATALOG_SCALE: Record<string, number> = {
-  "us-nfp": 0.001, // 139K → 139 (thousands, PAYEMS diff)
+  "us-nfp": 0.001,
   "us-initial-claims": 0.001,
   "us-continuing-claims": 0.001,
-  // ADP: leave as-is — Investing prints match current obs magnitude
+  "us-adp-change": 0.001,
+  "us-jolts-openings": 0.001,
+  "us-jolts-hires": 0.001,
+  "us-housing-starts": 0.001,
+  "us-building-permits": 0.001,
+  "us-payrolls-level": 0.001,
 };
 
 export function investingToCatalogScale(metricId: string): number {

@@ -83,7 +83,7 @@ function periodToDate(period: string): string | null {
   if (m1) return `${m1[1]}-${m1[2]}-01`;
   const m2 = period.match(/^(\d{4})M(\d{2})$/);
   if (m2) return `${m2[1]}-${m2[2]}-01`;
-  const q = period.match(/^(\d{4})Q([1-4])$/);
+  const q = period.match(/^(\d{4})-?Q([1-4])$/i);
   if (q) {
     const month = String((Number(q[2]) - 1) * 3 + 1).padStart(2, "0");
     return `${q[1]}-${month}-01`;
@@ -200,6 +200,13 @@ export async function fetchEurostatPreset(seriesId: string): Promise<RawPoint[]>
         nace_r2: "G47",
         indic_bt: "VOL_SLS",
       });
+    case "ei_isrr_mom":
+      return fetchEurostatSeries("ei_isrr_m", {
+        geo: "EA21",
+        unit: "RT1-SCA",
+        nace_r2: "G47",
+        indic_bt: "VOL_SLS",
+      });
     case "ei_bssi_esi":
       return fetchEurostatSeries("ei_bssi_m_r2", {
         geo: "EA21",
@@ -242,6 +249,31 @@ export async function fetchEurostatPreset(seriesId: string): Promise<RawPoint[]>
         geo: "EA21",
         s_adj: "SA",
         indic: "LM-UN-T-TOT",
+      });
+    case "lfsi_emp_q_ea":
+      return fetchEurostatSeries("lfsi_emp_q", {
+        geo: "EA21",
+        sex: "T",
+        age: "Y15-74",
+        unit: "THS_PER",
+        s_adj: "SA",
+        indic_em: "EMP_LFS",
+      });
+    case "lc_lci_wage_yoy":
+      return fetchEurostatSeries("lc_lci_r2_q", {
+        geo: "EA21",
+        unit: "I20",
+        s_adj: "SCA",
+        nace_r2: "B-S",
+        lcstruct: "D11",
+      });
+    case "lc_lci_wage_qoq":
+      return fetchEurostatSeries("lc_lci_r2_q", {
+        geo: "EA21",
+        unit: "PCH_PRE",
+        s_adj: "SCA",
+        nace_r2: "B-S",
+        lcstruct: "D11",
       });
     default:
       return fetchEurostatSeries(seriesId, { geo: "EA" });

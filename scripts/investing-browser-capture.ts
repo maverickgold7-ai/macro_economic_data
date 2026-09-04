@@ -8,7 +8,7 @@ export const INVESTING_KEEP_COUNTRIES = ["US", "UK", "EA", "DE", "FR", "IT", "ES
 
 /** Source text for CDP injection (load-more + DOM extract). */
 export const INVESTING_BROWSER_CAPTURE_JS = `
-async function __invCaptureMonth(dateFromMdY, dateToMdY, rangeFrom, rangeTo) {
+async function __invCaptureMonth(dateFromPicker, dateToPicker, rangeFrom, rangeTo) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const KEEP = new Set(${JSON.stringify(["US", "UK", "EA", "DE", "FR", "IT", "ES", "AU"])});
 
@@ -32,11 +32,20 @@ async function __invCaptureMonth(dateFromMdY, dateToMdY, rangeFrom, rangeTo) {
   if (!start || !end) return { ok: false, reason: "no-date-inputs" };
 
   start.focus();
-  setNativeValue(start, dateFromMdY);
+  setNativeValue(start, dateFromPicker);
   await sleep(250 + Math.random() * 200);
   end.focus();
-  setNativeValue(end, dateToMdY);
+  setNativeValue(end, dateToPicker);
   await sleep(300 + Math.random() * 200);
+
+  for (const sel of ['[class*="auth_popup"]', '[class*="modal"]']) {
+    for (const el of document.querySelectorAll(sel)) {
+      const node = el;
+      if (node instanceof HTMLElement) node.style.display = "none";
+    }
+  }
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
   const apply = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "Apply");
   if (apply) apply.click();
   await sleep(2800 + Math.random() * 800);

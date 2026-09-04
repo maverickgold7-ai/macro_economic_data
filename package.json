@@ -11,6 +11,7 @@
     "refresh": "tsx scripts/ingest.ts refresh",
     "simulate:releases": "tsx scripts/simulate-release-updates.ts",
     "import:investing": "tsx scripts/import-investing-calendar.ts",
+    "capture:investing": "tsx scripts/capture-investing-month.ts",
     "simulate:investing": "tsx scripts/simulate-investing-import.ts",
     "audit:surprise": "tsx scripts/audit-investing-surprise.ts",
     "remap:investing": "tsx scripts/remap-investing.ts",
@@ -18,6 +19,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
+    "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "dotenv": "^16.6.1",
@@ -38,6 +40,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "15.5.23",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.11",
     "typescript": "^5"

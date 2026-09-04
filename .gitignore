@@ -44,3 +44,6 @@ next-env.d.ts
 /data
 *.db
 *.db-*
+
+# investing.com browser profile (Cloudflare cookies)
+.playwright-investing-profile/

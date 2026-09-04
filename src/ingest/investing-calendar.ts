@@ -3,6 +3,7 @@ import path from "path";
 import { z } from "zod";
 import { getClient } from "@/db";
 import {
+  investingToCatalogScale,
   mapInvestingEvent,
   normalizeCalendarCountry,
   type CalendarCountry,
@@ -329,6 +330,10 @@ export async function importInvestingDump(
 
       // Promote mapped rows with an actual into releases (consensus enrichment)
       if (metricId && actual != null && periodDate) {
+        const scale = investingToCatalogScale(metricId);
+        const actualScaled = actual * scale;
+        const forecastScaled = forecast != null ? forecast * scale : null;
+        const previousScaled = previous != null ? previous * scale : null;
         await client.execute({
           sql: `INSERT INTO releases (
                   metric_id, period_date, released_at, value, expected_value,
@@ -344,10 +349,12 @@ export async function importInvestingDump(
             metricId,
             periodDate,
             releasedAt,
-            actual,
-            forecast,
-            previous,
-            previous != null ? Math.round((actual - previous) * 1e6) / 1e6 : null,
+            actualScaled,
+            forecastScaled,
+            previousScaled,
+            previousScaled != null
+              ? Math.round((actualScaled - previousScaled) * 1e6) / 1e6
+              : null,
             `investing calendar: ${row.event}`,
           ],
         });

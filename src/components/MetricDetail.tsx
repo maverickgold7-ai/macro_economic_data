@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SeriesChart } from "./SeriesChart";
-import { formatDelta, formatValue } from "@/lib/format";
+import clsx from "clsx";
+import { formatDelta, formatObsDate, formatValue } from "@/lib/format";
+import { surpriseTone, computeSurprise } from "@/lib/surprise";
 
 type SeriesPayload = {
   meta: {
@@ -24,12 +26,21 @@ type SeriesPayload = {
     lastIngestedAt: string | null;
   };
   history: Array<{ date: string; value: number }>;
+  displayReleasedAt?: string | null;
+  expectedValue?: number | null;
+  surprise?: number | null;
+  priorPeriodValue?: number | null;
+  priorPeriodDate?: string | null;
   releases: Array<{
     periodDate: string;
     releasedAt: string;
+    periodLabel?: string | null;
     value: number;
+    expectedValue?: number | null;
     priorPeriodValue: number | null;
     priorPeriodDate: string | null;
+    priorReleaseValue?: number | null;
+    changeVsPriorRelease?: number | null;
     changeVsPriorPeriod: number | null;
     supportingDocUrl: string | null;
     notes: string | null;
@@ -66,11 +77,22 @@ export function MetricDetail({ id }: { id: string }) {
     );
   }
 
-  const { meta, history, releases } = data;
+  const {
+    meta,
+    history,
+    releases,
+    displayReleasedAt,
+    expectedValue,
+    surprise,
+    priorPeriodValue,
+    priorPeriodDate,
+  } = data;
   const latest = history[history.length - 1];
   const prior = history[history.length - 2];
   const delta =
     latest && prior ? latest.value - prior.value : null;
+  const surpriseTone_ =
+    surprise != null ? surpriseTone(surprise, meta.id, meta.unit) : "neutral";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -89,28 +111,63 @@ export function MetricDetail({ id }: { id: string }) {
           {meta.description}
         </p>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl bg-[var(--paper)]/70 p-4">
-            <div className="text-xs text-[var(--muted)]">Latest</div>
+            <div className="text-xs text-[var(--muted)]">Actual</div>
             <div className="mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold">
               {formatValue(latest?.value, meta.unit)}
             </div>
-            <div className="text-xs text-[var(--muted)]">{latest?.date}</div>
+            <div className="text-xs text-[var(--muted)]">
+              {displayReleasedAt
+                ? `Released ${formatObsDate(displayReleasedAt)}`
+                : latest?.date
+                  ? `${formatObsDate(latest.date)} period`
+                  : "—"}
+            </div>
           </div>
           <div className="rounded-xl bg-[var(--paper)]/70 p-4">
-            <div className="text-xs text-[var(--muted)]">vs prior period</div>
+            <div className="text-xs text-[var(--muted)]">Consensus</div>
+            <div className="mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold">
+              {expectedValue != null ? formatValue(expectedValue, meta.unit) : "—"}
+            </div>
+            <div className="text-xs text-[var(--muted)]">Investing forecast</div>
+          </div>
+          <div className="rounded-xl bg-[var(--paper)]/70 p-4">
+            <div className="text-xs text-[var(--muted)]">Surprise</div>
+            <div
+              className={clsx(
+                "mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold",
+                surpriseTone_ === "good" && "text-[var(--up)]",
+                surpriseTone_ === "bad" && "text-[var(--down)]"
+              )}
+            >
+              {surprise != null ? formatDelta(surprise, meta.unit) : "—"}
+            </div>
+            <div className="text-xs text-[var(--muted)]">Actual − consensus</div>
+          </div>
+          <div className="rounded-xl bg-[var(--paper)]/70 p-4">
+            <div className="text-xs text-[var(--muted)]">Prior period</div>
+            <div className="mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold">
+              {priorPeriodValue != null
+                ? formatValue(priorPeriodValue, meta.unit)
+                : formatValue(prior?.value, meta.unit)}
+            </div>
+            <div className="text-xs text-[var(--muted)]">
+              {priorPeriodDate
+                ? formatObsDate(priorPeriodDate)
+                : prior?.date
+                  ? formatObsDate(prior.date)
+                  : "—"}
+            </div>
+          </div>
+          <div className="rounded-xl bg-[var(--paper)]/70 p-4">
+            <div className="text-xs text-[var(--muted)]">Seq change</div>
             <div className="mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold">
               {formatDelta(delta, meta.unit)}
             </div>
-            <div className="text-xs text-[var(--muted)]">{prior?.date ?? "—"}</div>
-          </div>
-          <div className="rounded-xl bg-[var(--paper)]/70 p-4">
-            <div className="text-xs text-[var(--muted)]">History</div>
-            <div className="mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold">
-              {meta.observationCount ?? history.length}
-            </div>
             <div className="text-xs text-[var(--muted)]">
-              from {meta.earliestAvailable ?? "—"}
+              {meta.observationCount ?? history.length} pts from{" "}
+              {meta.earliestAvailable?.slice(0, 4) ?? "—"}
             </div>
           </div>
         </div>
@@ -151,25 +208,57 @@ export function MetricDetail({ id }: { id: string }) {
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-[var(--muted)]">
               <tr>
+                <th className="pb-2 pr-3">Released</th>
                 <th className="pb-2 pr-3">Period</th>
-                <th className="pb-2 pr-3">Value</th>
-                <th className="pb-2 pr-3">Prior period</th>
+                <th className="pb-2 pr-3">Actual</th>
+                <th className="pb-2 pr-3">Consensus</th>
+                <th className="pb-2 pr-3">Surprise</th>
+                <th className="pb-2 pr-3">Prior month</th>
+                <th className="pb-2 pr-3">Revision</th>
                 <th className="pb-2 pr-3">Δ</th>
                 <th className="pb-2">Docs</th>
               </tr>
             </thead>
             <tbody>
-              {releases.map((r) => (
+              {releases.map((r) => {
+                const rowSurprise = computeSurprise(r.value, r.expectedValue, meta.unit);
+                const rowTone =
+                  rowSurprise != null
+                    ? surpriseTone(rowSurprise, meta.id, meta.unit)
+                    : "neutral";
+                return (
                 <tr key={`${r.periodDate}-${r.releasedAt}`} className="border-t border-[var(--line)]">
                   <td className="py-2.5 pr-3 font-[family-name:var(--font-mono)]">
-                    {r.periodDate}
+                    {formatObsDate(r.releasedAt)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-[var(--muted)]">
+                    {r.periodLabel ?? formatObsDate(r.periodDate)}
                   </td>
                   <td className="py-2.5 pr-3 font-[family-name:var(--font-mono)]">
                     {formatValue(r.value, meta.unit)}
                   </td>
+                  <td className="py-2.5 pr-3 font-[family-name:var(--font-mono)] text-[var(--muted)]">
+                    {r.expectedValue != null ? formatValue(r.expectedValue, meta.unit) : "—"}
+                  </td>
+                  <td
+                    className={clsx(
+                      "py-2.5 pr-3 font-[family-name:var(--font-mono)]",
+                      rowTone === "good" && "text-[var(--up)]",
+                      rowTone === "bad" && "text-[var(--down)]"
+                    )}
+                  >
+                    {rowSurprise != null ? formatDelta(rowSurprise, meta.unit) : "—"}
+                  </td>
                   <td className="py-2.5 pr-3 text-[var(--muted)]">
-                    {r.priorPeriodDate
-                      ? `${formatValue(r.priorPeriodValue, meta.unit)} (${r.priorPeriodDate})`
+                    {r.priorPeriodValue != null
+                      ? `${formatValue(r.priorPeriodValue, meta.unit)}${
+                          r.priorPeriodDate ? ` (${formatObsDate(r.priorPeriodDate)})` : ""
+                        }`
+                      : "—"}
+                  </td>
+                  <td className="py-2.5 pr-3 text-[var(--muted)]">
+                    {r.priorReleaseValue != null
+                      ? `${formatValue(r.priorReleaseValue, meta.unit)} → ${formatValue(r.value, meta.unit)} (${formatDelta(r.changeVsPriorRelease ?? null, meta.unit)})`
                       : "—"}
                   </td>
                   <td className="py-2.5 pr-3 font-[family-name:var(--font-mono)]">
@@ -190,7 +279,8 @@ export function MetricDetail({ id }: { id: string }) {
                     )}
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>
