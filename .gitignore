@@ -47,3 +47,4 @@ next-env.d.ts
 
 # investing.com browser profile (Cloudflare cookies)
 .playwright-investing-profile/
+!.env.example
