@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * DOL ETA Unemployment Insurance Weekly Claims.
@@ -20,7 +21,7 @@ async function fromPdf(): Promise<{
   initial: RawPoint[];
   continuing: RawPoint[];
 }> {
-  const res = await fetch("https://www.dol.gov/ui/data.pdf", {
+  const res = await fetchWithTimeout("https://www.dol.gov/ui/data.pdf", {
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; macro-economy-tracker/1.0)",
       Accept: "application/pdf",
@@ -66,11 +67,11 @@ async function fromHtml(): Promise<{
   initial: RawPoint[];
   continuing: RawPoint[];
 }> {
-  const res = await fetch("https://www.dol.gov/newsroom/releases", {
+  const res = await fetchWithTimeout("https://www.dol.gov/newsroom/releases", {
     headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" },
   });
   // Fallback: parse claims.asp body text for latest national figures if present
-  const claims = await fetch("https://oui.doleta.gov/unemploy/claims.asp", {
+  const claims = await fetchWithTimeout("https://oui.doleta.gov/unemploy/claims.asp", {
     headers: { "User-Agent": "Mozilla/5.0", Accept: "text/html" },
   });
   if (!claims.ok) throw new Error(`DOL claims HTML ${claims.status}`);

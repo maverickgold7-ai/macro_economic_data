@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const SAFE_ZIP =
   "https://www.ecb.europa.eu/stats/pdf/surveys/sme/SAFE_main_series.zip";
 
 /** Chart 14 — euro area firms' expected wage growth over the next 12 months (mean, %). */
 export async function fetchEcbSafeWageExpectations(): Promise<RawPoint[]> {
-  const res = await fetch(SAFE_ZIP, {
+  const res = await fetchWithTimeout(SAFE_ZIP, {
     headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "*/*" },
   });
   if (!res.ok) throw new Error(`ECB SAFE zip ${res.status}`);

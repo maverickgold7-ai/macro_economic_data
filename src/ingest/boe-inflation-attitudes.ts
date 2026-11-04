@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const SITEMAP =
   "https://www.bankofengland.co.uk/sitemap/inflation-attitudes-survey";
@@ -18,7 +19,7 @@ export async function fetchBoeInflationExpectations1y(): Promise<RawPoint[]> {
 export async function fetchBoeInflationExpectations(
   question: BoeIasQuestion
 ): Promise<RawPoint[]> {
-  const res = await fetch(SITEMAP, {
+  const res = await fetchWithTimeout(SITEMAP, {
     headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "text/html" },
   });
   if (!res.ok) throw new Error(`BoE sitemap ${res.status}`);
@@ -39,7 +40,7 @@ export async function fetchBoeInflationExpectations(
 
   for (const url of unique) {
     try {
-      const pageRes = await fetch(url, {
+      const pageRes = await fetchWithTimeout(url, {
         headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "text/html" },
       });
       if (!pageRes.ok) continue;

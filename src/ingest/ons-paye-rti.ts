@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as cheerio from "cheerio";
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const DATASET_PAGE =
   "https://www.ons.gov.uk/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/realtimeinformationstatisticsreferencetableseasonallyadjusted/current";
@@ -68,7 +69,7 @@ async function loadPayeXlsx(): Promise<Buffer> {
   const now = Date.now();
   if (cachedXlsx && now - cachedXlsx.at < CACHE_MS) return cachedXlsx.buf;
   const xlsxUrl = await resolveLatestPayeXlsxUrl();
-  const buf = Buffer.from(await (await fetch(xlsxUrl)).arrayBuffer());
+  const buf = Buffer.from(await (await fetchWithTimeout(xlsxUrl)).arrayBuffer());
   cachedXlsx = { url: xlsxUrl, buf, at: now };
   return buf;
 }
@@ -92,7 +93,7 @@ async function parsePayeSheet<T>(
 }
 
 async function resolveLatestPayeXlsxUrl(): Promise<string> {
-  const res = await fetch(DATASET_PAGE, {
+  const res = await fetchWithTimeout(DATASET_PAGE, {
     headers: {
       Accept: "text/html",
       "User-Agent": "macro-economy-tracker/1.0",

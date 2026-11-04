@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * Atlanta Fed GDPNow — scraped from the official tool page / data feed.
@@ -11,7 +12,7 @@ export async function fetchGdpNow(): Promise<RawPoint[]> {
   ];
 
   // HTML page often embeds the latest nowcast prominently
-  const page = await fetch(candidates[1], {
+  const page = await fetchWithTimeout(candidates[1], {
     headers: {
       "User-Agent": "macro-economy-tracker/1.0",
       Accept: "text/html",
@@ -46,7 +47,7 @@ export async function fetchGdpNow(): Promise<RawPoint[]> {
 export async function fetchClevelandExpInflation(): Promise<RawPoint[]> {
   const url =
     "https://www.clevelandfed.org/indicators-and-data/inflation-expectations";
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "text/html" },
   });
   if (!res.ok) throw new Error(`Cleveland Fed ${res.status}`);

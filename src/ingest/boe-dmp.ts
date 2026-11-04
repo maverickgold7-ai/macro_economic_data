@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const DMP_INDEX =
   "https://www.bankofengland.co.uk/monetary-policy/decision-maker-panel-data";
@@ -42,7 +43,7 @@ async function loadLatestDmpXlsx(): Promise<Buffer> {
   const now = Date.now();
   if (cachedXlsx && now - cachedXlsx.at < CACHE_MS) return cachedXlsx.buf;
   const url = await resolveLatestDmpMonthlyXlsxUrl();
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "*/*" },
   });
   if (!res.ok) throw new Error(`BoE DMP xlsx ${res.status}`);
@@ -74,7 +75,7 @@ async function resolveLatestDmpMonthlyXlsxUrl(): Promise<string> {
 
   for (const page of pages) {
     try {
-      const res = await fetch(page, {
+      const res = await fetchWithTimeout(page, {
         headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "text/html" },
       });
       if (!res.ok) continue;
@@ -94,7 +95,7 @@ async function resolveLatestDmpMonthlyXlsxUrl(): Promise<string> {
   for (const month of months) {
     const url = `https://www.bankofengland.co.uk/-/media/boe/files/decision-maker-panel-survey/${year}/monthly-dmp-data-${month}-${year}.xlsx`;
     try {
-      const res = await fetch(url, { method: "HEAD", headers: { "User-Agent": "macro-economy-tracker/1.0" } });
+      const res = await fetchWithTimeout(url, { method: "HEAD", headers: { "User-Agent": "macro-economy-tracker/1.0" } });
       if (res.ok) return url;
     } catch {
       // continue

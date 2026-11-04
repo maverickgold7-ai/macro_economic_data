@@ -17,6 +17,7 @@ import {
 } from "@/catalog/desk-smoothed";
 import { LIVE_MAP, liveSeriesIdsForProvider } from "@/catalog/live-map";
 import { investingToCatalogScale } from "@/catalog/investing-map";
+import type { InStatement } from "@libsql/client";
 import { getClient, getDb } from "@/db";
 import {
   calendarEvents,
@@ -351,7 +352,7 @@ async function writeReleaseRow(
       priorValue = Number(prev.rows[0].value);
     }
   }
-  if (!priorValue) {
+  if (priorValue == null) {
     const prevRel = await client.execute({
       sql: `SELECT period_date, value FROM releases
             WHERE metric_id = ? AND period_date < ?
@@ -436,7 +437,36 @@ async function writeReleaseRow(
   });
 }
 
-/** Full replace — used for historical backfill. */
+/**
+ * Refuse a backfill that would shrink stored history by more than this fraction.
+ * A truncated or partial source response must not silently wipe good history.
+ * Override with INGEST_ALLOW_SHRINK=1 when a shrink is intended (e.g. series redefinition).
+ */
+const MAX_BACKFILL_SHRINK = 0.1;
+
+function observationInserts(
+  metricId: string,
+  points: Array<{ date: string; value: number; rawValue: number }>,
+  releasedAt: string,
+  vintage: string,
+  chunkSize: number
+): InStatement[] {
+  const stmts: InStatement[] = [];
+  for (let i = 0; i < points.length; i += chunkSize) {
+    const chunk = points.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
+    const args: (string | number | null)[] = [];
+    for (const p of chunk) args.push(metricId, p.date, p.value, p.rawValue, releasedAt, vintage);
+    stmts.push({
+      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
+            VALUES ${placeholders}`,
+      args,
+    });
+  }
+  return stmts;
+}
+
+/** Full replace — used for historical backfill. Delete + insert + metadata run in one transaction. */
 async function persistMetricReplace(
   metric: MetricDef,
   raw: RawPoint[],
@@ -447,40 +477,40 @@ async function persistMetricReplace(
   const now = new Date().toISOString();
   const vintage = now.slice(0, 10);
 
-  await client.execute({
-    sql: "DELETE FROM observations WHERE metric_id = ?",
+  const existing = await client.execute({
+    sql: "SELECT COUNT(*) AS c FROM observations WHERE metric_id = ?",
     args: [metric.id],
   });
-
-  const chunkSize = 400;
-  for (let i = 0; i < unique.length; i += chunkSize) {
-    const chunk = unique.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
-    const args: (string | number | null)[] = [];
-    for (const p of chunk) {
-      args.push(metric.id, p.date, p.value, p.rawValue, now, vintage);
-    }
-    await client.execute({
-      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
-            VALUES ${placeholders}`,
-      args,
-    });
+  const existingCount = Number(existing.rows[0]?.c ?? 0);
+  if (
+    existingCount > 0 &&
+    unique.length < existingCount * (1 - MAX_BACKFILL_SHRINK) &&
+    process.env.INGEST_ALLOW_SHRINK !== "1"
+  ) {
+    throw new Error(
+      `Refusing backfill: history would shrink from ${existingCount} to ${unique.length} points ` +
+        `(>${MAX_BACKFILL_SHRINK * 100}%). Set INGEST_ALLOW_SHRINK=1 to override.`
+    );
   }
 
-  await getDb()
-    .update(metrics)
-    .set({
-      earliestAvailable: unique[0].date,
-      lastIngestedAt: now,
-      observationCount: unique.length,
-    })
-    .where(eq(metrics.id, metric.id));
+  await client.batch(
+    [
+      { sql: "DELETE FROM observations WHERE metric_id = ?", args: [metric.id] },
+      ...observationInserts(metric.id, unique, now, vintage, 400),
+      {
+        sql: `UPDATE metrics SET earliest_available = ?, last_ingested_at = ?, observation_count = ?
+              WHERE id = ?`,
+        args: [unique[0].date, now, unique.length, metric.id],
+      },
+    ],
+    "write"
+  );
 
   await writeReleaseRow(metric, unique, sourceNote);
   return unique.length;
 }
 
-/** Merge upsert — used for live refresh so we don't wipe FRED history. */
+/** Merge upsert — used for live refresh so we don't wipe FRED history. Runs in one transaction. */
 async function persistMetricMerge(
   metric: MetricDef,
   raw: RawPoint[],
@@ -492,51 +522,27 @@ async function persistMetricMerge(
   const now = new Date().toISOString();
   const vintage = `live-${now.slice(0, 10)}`;
 
-  // Bulk delete + insert for speed
   const dates = unique.map((p) => p.date);
-  if (dates.length === 1) {
-    await client.execute({
-      sql: `DELETE FROM observations WHERE metric_id = ? AND date = ?`,
-      args: [metric.id, dates[0]],
-    });
-  } else if (dates.length > 1) {
-    const placeholders = dates.map(() => "?").join(",");
-    await client.execute({
-      sql: `DELETE FROM observations WHERE metric_id = ? AND date IN (${placeholders})`,
-      args: [metric.id, ...dates],
-    });
-  }
+  const placeholders = dates.map(() => "?").join(",");
 
-  const chunkSize = 200;
-  for (let i = 0; i < unique.length; i += chunkSize) {
-    const chunk = unique.slice(i, i + chunkSize);
-    const ph = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
-    const args: (string | number | null)[] = [];
-    for (const p of chunk) {
-      args.push(metric.id, p.date, p.value, p.rawValue, now, vintage);
-    }
-    await client.execute({
-      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
-            VALUES ${ph}`,
-      args,
-    });
-  }
-
-  const countRes = await client.execute({
-    sql: `SELECT COUNT(*) AS c, MIN(date) AS mn FROM observations WHERE metric_id = ?`,
-    args: [metric.id],
-  });
-  const observationCount = Number(countRes.rows[0]?.c ?? unique.length);
-  const earliestAvailable = String(countRes.rows[0]?.mn ?? unique[0].date);
-
-  await getDb()
-    .update(metrics)
-    .set({
-      earliestAvailable,
-      lastIngestedAt: now,
-      observationCount,
-    })
-    .where(eq(metrics.id, metric.id));
+  await client.batch(
+    [
+      {
+        sql: `DELETE FROM observations WHERE metric_id = ? AND date IN (${placeholders})`,
+        args: [metric.id, ...dates],
+      },
+      ...observationInserts(metric.id, unique, now, vintage, 200),
+      {
+        sql: `UPDATE metrics
+              SET last_ingested_at = ?,
+                  observation_count = (SELECT COUNT(*) FROM observations WHERE metric_id = ?),
+                  earliest_available = (SELECT MIN(date) FROM observations WHERE metric_id = ?)
+              WHERE id = ?`,
+        args: [now, metric.id, metric.id, metric.id],
+      },
+    ],
+    "write"
+  );
 
   await writeReleaseRow(metric, unique, sourceNote, opts?.docsUrl);
   return unique.length;
@@ -817,6 +823,14 @@ async function fetchBoeBySeriesId(seriesId: string) {
   throw new Error(`Unknown BoE series ${seriesId}`);
 }
 
+/**
+ * Live loaders whose points are already the published headline (e.g. NFP change, PPI YoY
+ * from the bulletin) rather than raw levels. These must be stored as-is, not re-transformed.
+ */
+function isHeadlineNote(note: string): boolean {
+  return note.includes("(change)") || note.includes("release page") || note.includes("PPI bulletin");
+}
+
 export async function runIngest(
   mode: "backfill" | "refresh",
   opts?: { metricIds?: string[] }
@@ -861,10 +875,7 @@ export async function runIngest(
         try {
           const live = await loadLiveRaw(metric, liveCaches);
           if (live?.points.length) {
-            const headline =
-              live.note.includes("(change)") ||
-              live.note.includes("release page") ||
-              live.note.includes("PPI bulletin");
+            const headline = isHeadlineNote(live.note);
             const rss = liveCaches.rssByMetric?.get(metric.id);
             const count = await persistMetricMerge(
               metric,
@@ -903,13 +914,19 @@ export async function runIngest(
         const live = await loadLiveRaw(metric, liveCaches);
         if (live?.points.length) {
           const overlay = await persistMetricMerge(metric, live.points, live.note, {
+            // Same rule as refresh: headline values are already in final units; don't transform twice.
+            treatAsLevel: isHeadlineNote(live.note),
             docsUrl: liveCaches.rssByMetric?.get(metric.id)?.link ?? metric.docsUrl,
           });
           count = Math.max(count, overlay);
           via = "live";
         }
-      } catch {
-        // optional overlay
+      } catch (err) {
+        // Overlay is optional, but say why it was skipped.
+        console.warn(
+          `[backfill] ${metric.id} live overlay skipped:`,
+          err instanceof Error ? err.message : err
+        );
       }
       return { ok: true as const, metricId: metric.id, count, via };
     } catch (err) {

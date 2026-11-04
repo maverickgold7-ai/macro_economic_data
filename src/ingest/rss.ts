@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 export interface FeedItem {
   id: string;
@@ -47,7 +48,7 @@ export async function fetchReleaseFeeds(): Promise<FeedItem[]> {
   await Promise.all(
     FEEDS.map(async (feed) => {
       try {
-        const res = await fetch(feed.url, {
+        const res = await fetchWithTimeout(feed.url, {
           headers: {
             Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
             "User-Agent": "macro-economy-tracker/1.0",
