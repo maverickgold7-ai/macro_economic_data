@@ -111,7 +111,7 @@ export const ingestRuns = sqliteTable("ingest_runs", {
   startedAt: text("started_at").notNull(),
   finishedAt: text("finished_at"),
   mode: text("mode").notNull(), // backfill | refresh
-  status: text("status").notNull(), // running | ok | error
+  status: text("status").notNull(), // running | ok | partial | error | abandoned
   metricsProcessed: integer("metrics_processed").default(0),
   observationsUpserted: integer("observations_upserted").default(0),
   error: text("error"),

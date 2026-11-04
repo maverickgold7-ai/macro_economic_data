@@ -313,7 +313,8 @@ function preparePoints(
   const scaled = scalePoints(metric, raw);
   const transformed = applyTransform(
     scaled,
-    effectiveTransform(metric, opts)
+    effectiveTransform(metric, opts),
+    metric.frequency
   ).map((p) => ({
     ...p,
     value: round(p.value),
@@ -839,18 +840,61 @@ export async function runIngest(
   await seedCatalog();
 
   const db = getDb();
-  const startedAt = new Date().toISOString();
-  await db.insert(ingestRuns).values({
-    startedAt,
-    mode,
-    status: "running",
-    metricsProcessed: 0,
-    observationsUpserted: 0,
-  });
-  const runRow = (
-    await db.select().from(ingestRuns).orderBy(desc(ingestRuns.id)).limit(1)
-  )[0];
-  const runId = runRow?.id ?? 0;
+  const runId = await acquireRunLock(mode);
+  try {
+    return await runIngestLocked(mode, runId, opts);
+  } catch (err) {
+    await db
+      .update(ingestRuns)
+      .set({
+        finishedAt: new Date().toISOString(),
+        status: "error",
+        error: JSON.stringify({ fatal: err instanceof Error ? err.message : String(err) }),
+      })
+      .where(eq(ingestRuns.id, runId));
+    throw err;
+  }
+}
+
+/** A run older than this that is still "running" is assumed dead (process killed). */
+const RUN_LOCK_STALE_MS = 30 * 60 * 1000;
+
+/**
+ * Only one ingest at a time (cron + manual + API would otherwise interleave writes).
+ * Uses the ingest_runs table as the lock, so it also works across processes.
+ */
+async function acquireRunLock(mode: "backfill" | "refresh"): Promise<number> {
+  const db = getDb();
+  const now = Date.now();
+  const running = await db.select().from(ingestRuns).where(eq(ingestRuns.status, "running"));
+  for (const r of running) {
+    if (now - Date.parse(r.startedAt) < RUN_LOCK_STALE_MS) {
+      throw new Error(`Ingest run #${r.id} (${r.mode}) started at ${r.startedAt} is still running`);
+    }
+    await db
+      .update(ingestRuns)
+      .set({ status: "abandoned", finishedAt: new Date(now).toISOString() })
+      .where(eq(ingestRuns.id, r.id));
+  }
+  const [row] = await db
+    .insert(ingestRuns)
+    .values({
+      startedAt: new Date(now).toISOString(),
+      mode,
+      status: "running",
+      metricsProcessed: 0,
+      observationsUpserted: 0,
+    })
+    .returning({ id: ingestRuns.id });
+  return row.id;
+}
+
+async function runIngestLocked(
+  mode: "backfill" | "refresh",
+  runId: number,
+  opts?: { metricIds?: string[] }
+): Promise<IngestSummary> {
+  const db = getDb();
 
   const failures: IngestSummary["failures"] = [];
   let metricsProcessed = 0;
@@ -952,7 +996,8 @@ export async function runIngest(
     .update(ingestRuns)
     .set({
       finishedAt,
-      status: failures.length && metricsProcessed === 0 ? "error" : "ok",
+      // ok = every metric succeeded; partial = some failed; error = none succeeded
+      status: metricsProcessed === 0 ? "error" : failures.length ? "partial" : "ok",
       metricsProcessed,
       observationsUpserted,
       error: JSON.stringify({
