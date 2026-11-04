@@ -59,6 +59,8 @@ export const releases = sqliteTable(
       .notNull()
       .references(() => metrics.id),
     periodDate: text("period_date").notNull(),
+    // When the release was first seen: the Investing.com calendar time if that calendar supplied
+    // the row, otherwise the ingest run that first stored this period (not the official release time).
     releasedAt: text("released_at").notNull(),
     value: real("value").notNull(),
     expectedValue: real("expected_value"), // consensus / forecast at release
@@ -105,6 +107,16 @@ export const calendarEvents = sqliteTable(
     index("calendar_released_idx").on(t.releasedAt),
   ]
 );
+
+/** Append-only log of value changes for a period (data revisions), written by the ingest. */
+export const observationRevisions = sqliteTable("observation_revisions", {
+  metricId: text("metric_id").notNull(),
+  date: text("date").notNull(),
+  oldValue: real("old_value").notNull(),
+  newValue: real("new_value").notNull(),
+  revisedAt: text("revised_at").notNull(),
+  sourceNote: text("source_note"),
+});
 
 export const ingestRuns = sqliteTable("ingest_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

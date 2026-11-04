@@ -717,7 +717,7 @@ export const METRICS: MetricDef[] = [
     subcategory: "labor_costs",
     name: "Average Hourly Earnings MoM",
     shortName: "AHE MoM",
-    description: "Average hourly earnings of production and nonsupervisory employees, month-over-month %.",
+    description: "Average hourly earnings of all employees, total private (CES0500000003), month-over-month %.",
     source: "fred",
     seriesId: "CES0500000003",
     transform: "pct_change_mom",

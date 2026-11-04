@@ -42,3 +42,25 @@ test("Surprise tone is read in rates terms", () => {
   assert.equal(surpriseTone(-5, "us-initial-claims"), "hawkish");
   assert.equal(surpriseTone(0, "us-nfp"), "neutral");
 });
+
+import { normalizeCalendarCountry } from "../src/catalog/investing-map";
+
+test("EUR alone does not identify the euro area", () => {
+  assert.equal(normalizeCalendarCountry("EUR", "Euro Zone"), "EA");
+  assert.equal(normalizeCalendarCountry("EUR", "Germany"), "DE");
+  assert.equal(normalizeCalendarCountry("EUR", ""), "OTHER");
+  assert.equal(normalizeCalendarCountry("USD", ""), "US");
+});
+
+import { investingToCatalogScale, mapInvestingEvent } from "../src/catalog/investing-map";
+
+test("consensus scaling matches catalog units", () => {
+  // claims are stored in persons; Investing "220K" parses to 220000 -> no scaling
+  assert.equal(investingToCatalogScale("us-initial-claims"), 1);
+  // payrolls are stored in thousands; "250K" -> 250000 * 0.001
+  assert.equal(investingToCatalogScale("us-nfp"), 0.001);
+});
+
+test("JOLTS hires level is not mapped onto the hires rate", () => {
+  assert.notEqual(mapInvestingEvent({ eventName: "JOLTS Hires", currency: "USD", country: "United States" }), "us-jolts-hires");
+});

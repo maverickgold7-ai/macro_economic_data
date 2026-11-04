@@ -29,10 +29,10 @@ import {
 } from "@/db/schema";
 import { computeSurprise } from "@/lib/surprise";
 import {
-  annualized3mFromIndex,
   annualized3mFromMom,
   indexLevel,
   movingAverage3,
+  printsPer3m,
   roundSmooth,
   windowEndingAt,
   type SeriesPoint,
@@ -168,6 +168,16 @@ const DDL = [
     role TEXT NOT NULL,
     notes TEXT
   )`,
+  // Append-only revision log: every time an ingest changes a stored value for a period.
+  `CREATE TABLE IF NOT EXISTS observation_revisions (
+    metric_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    old_value REAL NOT NULL,
+    new_value REAL NOT NULL,
+    revised_at TEXT NOT NULL,
+    source_note TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS obs_rev_metric_date ON observation_revisions (metric_id, date)`,
 ];
 
 async function ensureColumn(
@@ -467,6 +477,32 @@ function observationInserts(
   return stmts;
 }
 
+/** Rows whose stored value differs from the incoming one (> 1e-9), as revision-log inserts. */
+async function revisionInserts(
+  metricId: string,
+  incoming: Array<{ date: string; value: number }>,
+  revisedAt: string,
+  sourceNote: string
+): Promise<InStatement[]> {
+  const res = await getClient().execute({
+    sql: "SELECT date, value FROM observations WHERE metric_id = ?",
+    args: [metricId],
+  });
+  const old = new Map(res.rows.map((r) => [String(r.date), Number(r.value)]));
+  const stmts: InStatement[] = [];
+  for (const p of incoming) {
+    const prev = old.get(p.date);
+    if (prev != null && Number.isFinite(prev) && Math.abs(prev - p.value) > 1e-9) {
+      stmts.push({
+        sql: `INSERT INTO observation_revisions (metric_id, date, old_value, new_value, revised_at, source_note)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [metricId, p.date, prev, p.value, revisedAt, sourceNote],
+      });
+    }
+  }
+  return stmts;
+}
+
 /** Full replace — used for historical backfill. Delete + insert + metadata run in one transaction. */
 async function persistMetricReplace(
   metric: MetricDef,
@@ -494,8 +530,10 @@ async function persistMetricReplace(
     );
   }
 
+  const revisions = await revisionInserts(metric.id, unique, now, sourceNote);
   await client.batch(
     [
+      ...revisions,
       { sql: "DELETE FROM observations WHERE metric_id = ?", args: [metric.id] },
       ...observationInserts(metric.id, unique, now, vintage, 400),
       {
@@ -525,9 +563,11 @@ async function persistMetricMerge(
 
   const dates = unique.map((p) => p.date);
   const placeholders = dates.map(() => "?").join(",");
+  const revisions = await revisionInserts(metric.id, unique, now, sourceNote);
 
   await client.batch(
     [
+      ...revisions,
       {
         sql: `DELETE FROM observations WHERE metric_id = ? AND date IN (${placeholders})`,
         args: [metric.id, ...dates],
@@ -649,7 +689,7 @@ async function warmLiveCaches(): Promise<LiveCaches> {
 async function loadLiveRaw(
   metric: MetricDef,
   caches: LiveCaches
-): Promise<{ points: RawPoint[]; note: string } | null> {
+): Promise<{ points: RawPoint[]; note: string; headline?: boolean } | null> {
   const ref = LIVE_MAP[metric.id];
   if (!ref) {
     // Catalog native official sources
@@ -687,7 +727,7 @@ async function loadLiveRaw(
           caches.cpiRelease ?? null
         );
         if (scraped?.length) {
-          return { points: scraped, note: `Live BLS release page (${metric.id})` };
+          return { points: scraped, note: `Live BLS release page (${metric.id})`, headline: true };
         }
       }
       return null;
@@ -697,7 +737,7 @@ async function loadLiveRaw(
       if (ref.seriesId === "change") {
         // Prefer explicit change series; else derive from level in persons→thousands
         if (caches.adp.change.length) {
-        return { points: caches.adp.change, note: "Live ADP JSON API (change)" };
+        return { points: caches.adp.change, note: "Live ADP JSON API (change)", headline: true };
         }
         if (caches.adp.level.length >= 2) {
           const lvl = caches.adp.level.map((p) => ({
@@ -740,12 +780,14 @@ async function loadLiveRaw(
         return {
           points: [caches.onsPpi.inputYoy],
           note: "Live ONS PPI bulletin (input YoY)",
+          headline: true,
         };
       }
       if (metric.id === "uk-ppi-output-yoy" && caches.onsPpi?.outputYoy) {
         return {
           points: [caches.onsPpi.outputYoy],
           note: "Live ONS PPI bulletin (output YoY)",
+          headline: true,
         };
       }
       await new Promise((r) => setTimeout(r, 400));
@@ -759,14 +801,6 @@ async function loadLiveRaw(
         points: await fetchEurostatPreset(ref.seriesId),
         note: `Live Eurostat ${ref.seriesId}`,
       };
-    }
-    case "ecb": {
-      const points = await fetchEcbBySeriesId(ref.seriesId);
-      return { points, note: `Live ECB ${ref.seriesId}` };
-    }
-    case "boe": {
-      const points = await fetchBoeBySeriesId(ref.seriesId);
-      return { points, note: `Live BoE ${ref.seriesId}` };
     }
     default:
       return null;
@@ -822,14 +856,6 @@ async function fetchBoeBySeriesId(seriesId: string) {
     return fetchBoeDmpWages(seriesId);
   }
   throw new Error(`Unknown BoE series ${seriesId}`);
-}
-
-/**
- * Live loaders whose points are already the published headline (e.g. NFP change, PPI YoY
- * from the bulletin) rather than raw levels. These must be stored as-is, not re-transformed.
- */
-function isHeadlineNote(note: string): boolean {
-  return note.includes("(change)") || note.includes("release page") || note.includes("PPI bulletin");
 }
 
 export async function runIngest(
@@ -919,7 +945,7 @@ async function runIngestLocked(
         try {
           const live = await loadLiveRaw(metric, liveCaches);
           if (live?.points.length) {
-            const headline = isHeadlineNote(live.note);
+            const headline = live.headline === true;
             const rss = liveCaches.rssByMetric?.get(metric.id);
             const count = await persistMetricMerge(
               metric,
@@ -959,7 +985,7 @@ async function runIngestLocked(
         if (live?.points.length) {
           const overlay = await persistMetricMerge(metric, live.points, live.note, {
             // Same rule as refresh: headline values are already in final units; don't transform twice.
-            treatAsLevel: isHeadlineNote(live.note),
+            treatAsLevel: live.headline === true,
             docsUrl: liveCaches.rssByMetric?.get(metric.id)?.link ?? metric.docsUrl,
           });
           count = Math.max(count, overlay);
@@ -1470,24 +1496,36 @@ function computeSmoothedValue(
   periodsPerYear = 12
 ): number | null {
   const step = stepMonthsForPeriodsPerYear(periodsPerYear);
+  const n3m = printsPer3m(periodsPerYear);
 
+  if (method === "latest" || method === "latest_per_month") {
+    const win = windowEndingAt(seriesMap, anchorPeriod, 1, step);
+    if (!win) return null;
+    const v = win[0].value;
+    return roundSmooth(method === "latest_per_month" ? v / 3 : v);
+  }
   if (method === "ma3") {
+    if (periodsPerYear !== 12) return null; // a 3-month average needs monthly prints
     const win = windowEndingAt(seriesMap, anchorPeriod, 3, step);
     if (!win) return null;
     const avg = movingAverage3(win.map((p) => p.value));
     return avg == null ? null : roundSmooth(avg);
   }
   if (method === "ann3m_mom") {
-    const win = windowEndingAt(seriesMap, anchorPeriod, 3, step);
+    const win = windowEndingAt(seriesMap, anchorPeriod, n3m, step);
     if (!win) return null;
-    const ann = annualized3mFromMom(win.map((p) => p.value), { periodsPerYear });
+    const ann = annualized3mFromMom(win.map((p) => p.value), { periodsPerYear, window: n3m });
     return ann == null ? null : roundSmooth(ann);
   }
   if (method === "ann3m_index") {
-    const win = windowEndingAt(seriesMap, anchorPeriod, 4, step);
+    // level now vs level 3 months earlier: 4 monthly points or 2 quarterly points
+    const win = windowEndingAt(seriesMap, anchorPeriod, n3m + 1, step);
     if (!win) return null;
-    const ann = annualized3mFromIndex(win.map(indexLevel));
-    return ann == null ? null : roundSmooth(ann);
+    const levels = win.map(indexLevel);
+    const cur = levels[levels.length - 1];
+    const lag = levels[0];
+    if (!Number.isFinite(cur) || !Number.isFinite(lag) || lag === 0) return null;
+    return roundSmooth((Math.pow(cur / lag, 4) - 1) * 100);
   }
   return null;
 }

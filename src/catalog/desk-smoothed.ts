@@ -3,14 +3,18 @@
 import type { ColumnRule, DeskRegion } from "./desk-matrix";
 
 export type SmoothMethod =
-  | "ann3m_mom" // CPI, core, retail — compound 3 MoM prints, annualize
-  | "ann3m_index" // Wages — index level t vs t-3, annualize
-  | "ma3"; // UE, payrolls — 3-month rolling average
+  | "ann3m_mom" // CPI, core, retail, wages — 3 months annualized (monthly: 3 MoM; quarterly: 1 QoQ)
+  | "ann3m_index" // index level t vs t-3 months, annualize
+  | "ma3" // UE, payrolls — 3-month rolling average
+  | "latest" // series that are already 3-month averages (UK LFS ILO rate)
+  | "latest_per_month"; // quarterly changes expressed per month (EA LFS employment / 3)
 
 export const SMOOTH_METHOD_SHORT: Record<SmoothMethod, string> = {
   ann3m_mom: "3m/3m ann.",
   ann3m_index: "3m/3m ann. (index)",
   ma3: "3m avg",
+  latest: "latest (already 3m avg)",
+  latest_per_month: "latest quarter / 3",
 };
 
 export interface DeskSmoothedRowDef {
@@ -53,7 +57,8 @@ export const DESK_SMOOTHED_ROWS: DeskSmoothedRowDef[] = [
     us: "us-unemployment",
     uk: "uk-unemployment",
     ea: "ea-unemployment",
-    note: "UK: ILO rate (3m average); bulletin overlay when MGSX lags.",
+    methodByRegion: { UK: "latest" },
+    note: "UK: ILO rate is already a 3-month average (MGSX), shown as published; bulletin overlay when MGSX lags.",
   },
   {
     id: "payrolls-ma3",
@@ -65,7 +70,8 @@ export const DESK_SMOOTHED_ROWS: DeskSmoothedRowDef[] = [
     columnRule: "monthly",
     columnRuleByRegion: { EA: "quarter" },
     periodsPerYearByRegion: { EA: 4 },
-    note: "EA: quarterly LFS change (Mar/Jun/Sep/Dec cols); Q2 2026 not yet released.",
+    methodByRegion: { EA: "latest_per_month" },
+    note: "Thousands per month. EA: latest quarterly LFS change / 3 (Mar/Jun/Sep/Dec cols).",
   },
   {
     id: "wages-ann3m",
@@ -77,7 +83,7 @@ export const DESK_SMOOTHED_ROWS: DeskSmoothedRowDef[] = [
     periodsPerYearByRegion: { EA: 4 },
     columnRule: "monthly",
     columnRuleByRegion: { EA: "quarter" },
-    note: "UK: PAYE RTI median pay MoM (timelier than LMS AWE).",
+    note: "UK: PAYE RTI median pay MoM (timelier than LMS AWE). EA: latest QoQ annualized (one quarter = 3 months).",
   },
   {
     id: "retail-ann3m",
@@ -90,9 +96,11 @@ export const DESK_SMOOTHED_ROWS: DeskSmoothedRowDef[] = [
 ];
 
 export const SMOOTH_METHOD_LABELS: Record<SmoothMethod, string> = {
-  ann3m_mom: "Compound last 3 period-on-period % → annualize (MoM ×4; EA wages QoQ ×4/3)",
-  ann3m_index: "Index level t / t−3 → annualize (^4 − 1)",
-  ma3: "Arithmetic mean of last 3 prints",
+  ann3m_mom: "Last 3 months, annualized: compound 3 MoM prints ^4, or one QoQ print ^4",
+  ann3m_index: "Index level t / t−3 months → annualize (^4 − 1)",
+  ma3: "Arithmetic mean of last 3 monthly prints",
+  latest: "Latest print (series is already a 3-month average)",
+  latest_per_month: "Latest quarterly change divided by 3 (monthly pace)",
 };
 
 export function allDeskSmoothedMetricIds(): string[] {
