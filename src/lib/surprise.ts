@@ -20,17 +20,23 @@ export function computeSurprise(
   return round(actual - expected);
 }
 
+/**
+ * Rates-market reading of a surprise (actual − consensus) for a STIR desk.
+ * hawkish = pushes policy-rate expectations up (stronger activity, hotter inflation,
+ *           lower unemployment/claims); dovish = the opposite.
+ * UI colours follow bond prices: hawkish = down (red), dovish = up (green).
+ */
 export function surpriseTone(
   surprise: number | null,
   metricId: string,
-  unit: string
-): "good" | "bad" | "neutral" {
+  _unit?: string
+): "hawkish" | "dovish" | "neutral" {
   if (surprise == null || surprise === 0) return "neutral";
-  const invert =
+  const slackMeasure =
     metricId.includes("unemployment") ||
     metricId.includes("claims") ||
-    metricId.includes("u6");
-  if (invert) return surprise > 0 ? "bad" : "good";
-  if (unit === "percent") return surprise > 0 ? "good" : "bad";
-  return surprise > 0 ? "good" : "bad";
+    metricId.includes("u6") ||
+    metricId.includes("jobless");
+  const hawkish = slackMeasure ? surprise < 0 : surprise > 0;
+  return hawkish ? "hawkish" : "dovish";
 }

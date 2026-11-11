@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * BLS HTML news-release scrapers — used when the Public Data API is down/lagging.
@@ -10,7 +11,7 @@ export async function fetchBlsEmpsitRelease(): Promise<{
   unemployment: RawPoint | null;
   period: string | null;
 }> {
-  const res = await fetch("https://www.bls.gov/news.release/empsit.nr0.htm", {
+  const res = await fetchWithTimeout("https://www.bls.gov/news.release/empsit.nr0.htm", {
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; macro-economy-tracker/1.0)",
       Accept: "text/html",
@@ -65,7 +66,7 @@ export async function fetchBlsCpiRelease(): Promise<{
   coreYoy: RawPoint | null;
   period: string | null;
 }> {
-  const res = await fetch("https://www.bls.gov/news.release/cpi.nr0.htm", {
+  const res = await fetchWithTimeout("https://www.bls.gov/news.release/cpi.nr0.htm", {
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; macro-economy-tracker/1.0)",
       Accept: "text/html",

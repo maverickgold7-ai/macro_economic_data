@@ -471,7 +471,7 @@ async function main() {
   } catch (e) {
     console.warn("BLS API warm failed:", e instanceof Error ? e.message : e);
     (globalThis as unknown as { __blsCache?: Map<string, never> }).__blsCache =
-      new Map();
+      new Map<string, never>();
   }
   try {
     const empsit = await fetchBlsEmpsitRelease();

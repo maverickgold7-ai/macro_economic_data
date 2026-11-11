@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const FRED_OBS = "https://api.stlouisfed.org/fred/series/observations";
 const FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv";
@@ -40,7 +41,7 @@ async function fetchViaApi(
     observation_start: observationStart ?? "1776-07-04",
     sort_order: "asc",
   });
-  const res = await fetch(`${FRED_OBS}?${params}`, {
+  const res = await fetchWithTimeout(`${FRED_OBS}?${params}`, {
     headers: { Accept: "application/json" },
     next: { revalidate: 0 },
   });
@@ -60,7 +61,7 @@ async function fetchViaApi(
 
 async function fetchViaCsv(seriesId: string): Promise<FredFetchResult> {
   const url = `${FRED_CSV}?id=${encodeURIComponent(seriesId)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": "macro-economy-tracker/1.0" },
   });
   if (!res.ok) throw new Error(`FRED CSV ${res.status} for ${seriesId}`);

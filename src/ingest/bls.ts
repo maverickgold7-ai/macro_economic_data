@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const BLS_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/";
 
@@ -33,7 +34,7 @@ export async function fetchBlsSeries(
     let res: Response | null = null;
     let lastErr = "";
     for (let attempt = 0; attempt < 3; attempt++) {
-      res = await fetch(BLS_URL, {
+      res = await fetchWithTimeout(BLS_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

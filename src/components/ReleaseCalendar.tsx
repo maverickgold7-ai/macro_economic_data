@@ -123,8 +123,8 @@ function ActualCell({ ev }: { ev: TapeEvent }) {
     <span
       className={clsx(
         "font-semibold",
-        tone === "good" && "text-[var(--up)]",
-        tone === "bad" && "text-[var(--down)]"
+        tone === "dovish" && "text-[var(--up)]",
+        tone === "hawkish" && "text-[var(--down)]"
       )}
     >
       {display}

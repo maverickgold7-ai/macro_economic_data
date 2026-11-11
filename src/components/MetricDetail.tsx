@@ -137,8 +137,8 @@ export function MetricDetail({ id }: { id: string }) {
             <div
               className={clsx(
                 "mt-1 font-[family-name:var(--font-mono)] text-3xl font-semibold",
-                surpriseTone_ === "good" && "text-[var(--up)]",
-                surpriseTone_ === "bad" && "text-[var(--down)]"
+                surpriseTone_ === "dovish" && "text-[var(--up)]",
+                surpriseTone_ === "hawkish" && "text-[var(--down)]"
               )}
             >
               {surprise != null ? formatDelta(surprise, meta.unit) : "—"}
@@ -243,8 +243,8 @@ export function MetricDetail({ id }: { id: string }) {
                   <td
                     className={clsx(
                       "py-2.5 pr-3 font-[family-name:var(--font-mono)]",
-                      rowTone === "good" && "text-[var(--up)]",
-                      rowTone === "bad" && "text-[var(--down)]"
+                      rowTone === "dovish" && "text-[var(--up)]",
+                      rowTone === "hawkish" && "text-[var(--down)]"
                     )}
                   >
                     {rowSurprise != null ? formatDelta(rowSurprise, meta.unit) : "—"}

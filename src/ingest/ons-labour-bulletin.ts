@@ -1,11 +1,12 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * Latest ILO unemployment rate headline from the UK Labour Market bulletin.
  * ONS MGSX timeseries often lags the bulletin by ~1 month.
  */
 export async function fetchUkLabourMarketBulletinUe(): Promise<RawPoint | null> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     "https://www.ons.gov.uk/employmentandlabourmarket/peopleinwork/employmentandemployeetypes/bulletins/uklabourmarket/latest",
     {
       headers: {

@@ -17,6 +17,7 @@ import {
 } from "@/catalog/desk-smoothed";
 import { LIVE_MAP, liveSeriesIdsForProvider } from "@/catalog/live-map";
 import { investingToCatalogScale } from "@/catalog/investing-map";
+import type { InStatement } from "@libsql/client";
 import { getClient, getDb } from "@/db";
 import {
   calendarEvents,
@@ -28,10 +29,10 @@ import {
 } from "@/db/schema";
 import { computeSurprise } from "@/lib/surprise";
 import {
-  annualized3mFromIndex,
   annualized3mFromMom,
   indexLevel,
   movingAverage3,
+  printsPer3m,
   roundSmooth,
   windowEndingAt,
   type SeriesPoint,
@@ -167,6 +168,16 @@ const DDL = [
     role TEXT NOT NULL,
     notes TEXT
   )`,
+  // Append-only revision log: every time an ingest changes a stored value for a period.
+  `CREATE TABLE IF NOT EXISTS observation_revisions (
+    metric_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    old_value REAL NOT NULL,
+    new_value REAL NOT NULL,
+    revised_at TEXT NOT NULL,
+    source_note TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS obs_rev_metric_date ON observation_revisions (metric_id, date)`,
 ];
 
 async function ensureColumn(
@@ -312,7 +323,8 @@ function preparePoints(
   const scaled = scalePoints(metric, raw);
   const transformed = applyTransform(
     scaled,
-    effectiveTransform(metric, opts)
+    effectiveTransform(metric, opts),
+    metric.frequency
   ).map((p) => ({
     ...p,
     value: round(p.value),
@@ -351,7 +363,7 @@ async function writeReleaseRow(
       priorValue = Number(prev.rows[0].value);
     }
   }
-  if (!priorValue) {
+  if (priorValue == null) {
     const prevRel = await client.execute({
       sql: `SELECT period_date, value FROM releases
             WHERE metric_id = ? AND period_date < ?
@@ -436,7 +448,62 @@ async function writeReleaseRow(
   });
 }
 
-/** Full replace — used for historical backfill. */
+/**
+ * Refuse a backfill that would shrink stored history by more than this fraction.
+ * A truncated or partial source response must not silently wipe good history.
+ * Override with INGEST_ALLOW_SHRINK=1 when a shrink is intended (e.g. series redefinition).
+ */
+const MAX_BACKFILL_SHRINK = 0.1;
+
+function observationInserts(
+  metricId: string,
+  points: Array<{ date: string; value: number; rawValue: number }>,
+  releasedAt: string,
+  vintage: string,
+  chunkSize: number
+): InStatement[] {
+  const stmts: InStatement[] = [];
+  for (let i = 0; i < points.length; i += chunkSize) {
+    const chunk = points.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
+    const args: (string | number | null)[] = [];
+    for (const p of chunk) args.push(metricId, p.date, p.value, p.rawValue, releasedAt, vintage);
+    stmts.push({
+      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
+            VALUES ${placeholders}`,
+      args,
+    });
+  }
+  return stmts;
+}
+
+/** Rows whose stored value differs from the incoming one (> 1e-9), as revision-log inserts. */
+async function revisionInserts(
+  metricId: string,
+  incoming: Array<{ date: string; value: number }>,
+  revisedAt: string,
+  sourceNote: string
+): Promise<InStatement[]> {
+  const res = await getClient().execute({
+    sql: "SELECT date, value FROM observations WHERE metric_id = ?",
+    args: [metricId],
+  });
+  const old = new Map(res.rows.map((r) => [String(r.date), Number(r.value)]));
+  const stmts: InStatement[] = [];
+  for (const p of incoming) {
+    const prev = old.get(p.date);
+    if (prev != null && Number.isFinite(prev) && Math.abs(prev - p.value) > 1e-9) {
+      stmts.push({
+        sql: `INSERT INTO observation_revisions (metric_id, date, old_value, new_value, revised_at, source_note)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [metricId, p.date, prev, p.value, revisedAt, sourceNote],
+      });
+    }
+  }
+  return stmts;
+}
+
+/** Full replace — used for historical backfill. Delete + insert + metadata run in one transaction. */
 async function persistMetricReplace(
   metric: MetricDef,
   raw: RawPoint[],
@@ -447,40 +514,42 @@ async function persistMetricReplace(
   const now = new Date().toISOString();
   const vintage = now.slice(0, 10);
 
-  await client.execute({
-    sql: "DELETE FROM observations WHERE metric_id = ?",
+  const existing = await client.execute({
+    sql: "SELECT COUNT(*) AS c FROM observations WHERE metric_id = ?",
     args: [metric.id],
   });
-
-  const chunkSize = 400;
-  for (let i = 0; i < unique.length; i += chunkSize) {
-    const chunk = unique.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
-    const args: (string | number | null)[] = [];
-    for (const p of chunk) {
-      args.push(metric.id, p.date, p.value, p.rawValue, now, vintage);
-    }
-    await client.execute({
-      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
-            VALUES ${placeholders}`,
-      args,
-    });
+  const existingCount = Number(existing.rows[0]?.c ?? 0);
+  if (
+    existingCount > 0 &&
+    unique.length < existingCount * (1 - MAX_BACKFILL_SHRINK) &&
+    process.env.INGEST_ALLOW_SHRINK !== "1"
+  ) {
+    throw new Error(
+      `Refusing backfill: history would shrink from ${existingCount} to ${unique.length} points ` +
+        `(>${MAX_BACKFILL_SHRINK * 100}%). Set INGEST_ALLOW_SHRINK=1 to override.`
+    );
   }
 
-  await getDb()
-    .update(metrics)
-    .set({
-      earliestAvailable: unique[0].date,
-      lastIngestedAt: now,
-      observationCount: unique.length,
-    })
-    .where(eq(metrics.id, metric.id));
+  const revisions = await revisionInserts(metric.id, unique, now, sourceNote);
+  await client.batch(
+    [
+      ...revisions,
+      { sql: "DELETE FROM observations WHERE metric_id = ?", args: [metric.id] },
+      ...observationInserts(metric.id, unique, now, vintage, 400),
+      {
+        sql: `UPDATE metrics SET earliest_available = ?, last_ingested_at = ?, observation_count = ?
+              WHERE id = ?`,
+        args: [unique[0].date, now, unique.length, metric.id],
+      },
+    ],
+    "write"
+  );
 
   await writeReleaseRow(metric, unique, sourceNote);
   return unique.length;
 }
 
-/** Merge upsert — used for live refresh so we don't wipe FRED history. */
+/** Merge upsert — used for live refresh so we don't wipe FRED history. Runs in one transaction. */
 async function persistMetricMerge(
   metric: MetricDef,
   raw: RawPoint[],
@@ -492,51 +561,29 @@ async function persistMetricMerge(
   const now = new Date().toISOString();
   const vintage = `live-${now.slice(0, 10)}`;
 
-  // Bulk delete + insert for speed
   const dates = unique.map((p) => p.date);
-  if (dates.length === 1) {
-    await client.execute({
-      sql: `DELETE FROM observations WHERE metric_id = ? AND date = ?`,
-      args: [metric.id, dates[0]],
-    });
-  } else if (dates.length > 1) {
-    const placeholders = dates.map(() => "?").join(",");
-    await client.execute({
-      sql: `DELETE FROM observations WHERE metric_id = ? AND date IN (${placeholders})`,
-      args: [metric.id, ...dates],
-    });
-  }
+  const placeholders = dates.map(() => "?").join(",");
+  const revisions = await revisionInserts(metric.id, unique, now, sourceNote);
 
-  const chunkSize = 200;
-  for (let i = 0; i < unique.length; i += chunkSize) {
-    const chunk = unique.slice(i, i + chunkSize);
-    const ph = chunk.map(() => "(?, ?, ?, ?, ?, ?, 1)").join(",");
-    const args: (string | number | null)[] = [];
-    for (const p of chunk) {
-      args.push(metric.id, p.date, p.value, p.rawValue, now, vintage);
-    }
-    await client.execute({
-      sql: `INSERT INTO observations (metric_id, date, value, raw_value, released_at, vintage_date, is_latest)
-            VALUES ${ph}`,
-      args,
-    });
-  }
-
-  const countRes = await client.execute({
-    sql: `SELECT COUNT(*) AS c, MIN(date) AS mn FROM observations WHERE metric_id = ?`,
-    args: [metric.id],
-  });
-  const observationCount = Number(countRes.rows[0]?.c ?? unique.length);
-  const earliestAvailable = String(countRes.rows[0]?.mn ?? unique[0].date);
-
-  await getDb()
-    .update(metrics)
-    .set({
-      earliestAvailable,
-      lastIngestedAt: now,
-      observationCount,
-    })
-    .where(eq(metrics.id, metric.id));
+  await client.batch(
+    [
+      ...revisions,
+      {
+        sql: `DELETE FROM observations WHERE metric_id = ? AND date IN (${placeholders})`,
+        args: [metric.id, ...dates],
+      },
+      ...observationInserts(metric.id, unique, now, vintage, 200),
+      {
+        sql: `UPDATE metrics
+              SET last_ingested_at = ?,
+                  observation_count = (SELECT COUNT(*) FROM observations WHERE metric_id = ?),
+                  earliest_available = (SELECT MIN(date) FROM observations WHERE metric_id = ?)
+              WHERE id = ?`,
+        args: [now, metric.id, metric.id, metric.id],
+      },
+    ],
+    "write"
+  );
 
   await writeReleaseRow(metric, unique, sourceNote, opts?.docsUrl);
   return unique.length;
@@ -642,7 +689,7 @@ async function warmLiveCaches(): Promise<LiveCaches> {
 async function loadLiveRaw(
   metric: MetricDef,
   caches: LiveCaches
-): Promise<{ points: RawPoint[]; note: string } | null> {
+): Promise<{ points: RawPoint[]; note: string; headline?: boolean } | null> {
   const ref = LIVE_MAP[metric.id];
   if (!ref) {
     // Catalog native official sources
@@ -680,7 +727,7 @@ async function loadLiveRaw(
           caches.cpiRelease ?? null
         );
         if (scraped?.length) {
-          return { points: scraped, note: `Live BLS release page (${metric.id})` };
+          return { points: scraped, note: `Live BLS release page (${metric.id})`, headline: true };
         }
       }
       return null;
@@ -690,7 +737,7 @@ async function loadLiveRaw(
       if (ref.seriesId === "change") {
         // Prefer explicit change series; else derive from level in persons→thousands
         if (caches.adp.change.length) {
-        return { points: caches.adp.change, note: "Live ADP JSON API (change)" };
+        return { points: caches.adp.change, note: "Live ADP JSON API (change)", headline: true };
         }
         if (caches.adp.level.length >= 2) {
           const lvl = caches.adp.level.map((p) => ({
@@ -733,12 +780,14 @@ async function loadLiveRaw(
         return {
           points: [caches.onsPpi.inputYoy],
           note: "Live ONS PPI bulletin (input YoY)",
+          headline: true,
         };
       }
       if (metric.id === "uk-ppi-output-yoy" && caches.onsPpi?.outputYoy) {
         return {
           points: [caches.onsPpi.outputYoy],
           note: "Live ONS PPI bulletin (output YoY)",
+          headline: true,
         };
       }
       await new Promise((r) => setTimeout(r, 400));
@@ -752,14 +801,6 @@ async function loadLiveRaw(
         points: await fetchEurostatPreset(ref.seriesId),
         note: `Live Eurostat ${ref.seriesId}`,
       };
-    }
-    case "ecb": {
-      const points = await fetchEcbBySeriesId(ref.seriesId);
-      return { points, note: `Live ECB ${ref.seriesId}` };
-    }
-    case "boe": {
-      const points = await fetchBoeBySeriesId(ref.seriesId);
-      return { points, note: `Live BoE ${ref.seriesId}` };
     }
     default:
       return null;
@@ -825,18 +866,61 @@ export async function runIngest(
   await seedCatalog();
 
   const db = getDb();
-  const startedAt = new Date().toISOString();
-  await db.insert(ingestRuns).values({
-    startedAt,
-    mode,
-    status: "running",
-    metricsProcessed: 0,
-    observationsUpserted: 0,
-  });
-  const runRow = (
-    await db.select().from(ingestRuns).orderBy(desc(ingestRuns.id)).limit(1)
-  )[0];
-  const runId = runRow?.id ?? 0;
+  const runId = await acquireRunLock(mode);
+  try {
+    return await runIngestLocked(mode, runId, opts);
+  } catch (err) {
+    await db
+      .update(ingestRuns)
+      .set({
+        finishedAt: new Date().toISOString(),
+        status: "error",
+        error: JSON.stringify({ fatal: err instanceof Error ? err.message : String(err) }),
+      })
+      .where(eq(ingestRuns.id, runId));
+    throw err;
+  }
+}
+
+/** A run older than this that is still "running" is assumed dead (process killed). */
+const RUN_LOCK_STALE_MS = 30 * 60 * 1000;
+
+/**
+ * Only one ingest at a time (cron + manual + API would otherwise interleave writes).
+ * Uses the ingest_runs table as the lock, so it also works across processes.
+ */
+async function acquireRunLock(mode: "backfill" | "refresh"): Promise<number> {
+  const db = getDb();
+  const now = Date.now();
+  const running = await db.select().from(ingestRuns).where(eq(ingestRuns.status, "running"));
+  for (const r of running) {
+    if (now - Date.parse(r.startedAt) < RUN_LOCK_STALE_MS) {
+      throw new Error(`Ingest run #${r.id} (${r.mode}) started at ${r.startedAt} is still running`);
+    }
+    await db
+      .update(ingestRuns)
+      .set({ status: "abandoned", finishedAt: new Date(now).toISOString() })
+      .where(eq(ingestRuns.id, r.id));
+  }
+  const [row] = await db
+    .insert(ingestRuns)
+    .values({
+      startedAt: new Date(now).toISOString(),
+      mode,
+      status: "running",
+      metricsProcessed: 0,
+      observationsUpserted: 0,
+    })
+    .returning({ id: ingestRuns.id });
+  return row.id;
+}
+
+async function runIngestLocked(
+  mode: "backfill" | "refresh",
+  runId: number,
+  opts?: { metricIds?: string[] }
+): Promise<IngestSummary> {
+  const db = getDb();
 
   const failures: IngestSummary["failures"] = [];
   let metricsProcessed = 0;
@@ -861,10 +945,7 @@ export async function runIngest(
         try {
           const live = await loadLiveRaw(metric, liveCaches);
           if (live?.points.length) {
-            const headline =
-              live.note.includes("(change)") ||
-              live.note.includes("release page") ||
-              live.note.includes("PPI bulletin");
+            const headline = live.headline === true;
             const rss = liveCaches.rssByMetric?.get(metric.id);
             const count = await persistMetricMerge(
               metric,
@@ -903,13 +984,19 @@ export async function runIngest(
         const live = await loadLiveRaw(metric, liveCaches);
         if (live?.points.length) {
           const overlay = await persistMetricMerge(metric, live.points, live.note, {
+            // Same rule as refresh: headline values are already in final units; don't transform twice.
+            treatAsLevel: live.headline === true,
             docsUrl: liveCaches.rssByMetric?.get(metric.id)?.link ?? metric.docsUrl,
           });
           count = Math.max(count, overlay);
           via = "live";
         }
-      } catch {
-        // optional overlay
+      } catch (err) {
+        // Overlay is optional, but say why it was skipped.
+        console.warn(
+          `[backfill] ${metric.id} live overlay skipped:`,
+          err instanceof Error ? err.message : err
+        );
       }
       return { ok: true as const, metricId: metric.id, count, via };
     } catch (err) {
@@ -935,7 +1022,8 @@ export async function runIngest(
     .update(ingestRuns)
     .set({
       finishedAt,
-      status: failures.length && metricsProcessed === 0 ? "error" : "ok",
+      // ok = every metric succeeded; partial = some failed; error = none succeeded
+      status: metricsProcessed === 0 ? "error" : failures.length ? "partial" : "ok",
       metricsProcessed,
       observationsUpserted,
       error: JSON.stringify({
@@ -1408,24 +1496,36 @@ function computeSmoothedValue(
   periodsPerYear = 12
 ): number | null {
   const step = stepMonthsForPeriodsPerYear(periodsPerYear);
+  const n3m = printsPer3m(periodsPerYear);
 
+  if (method === "latest" || method === "latest_per_month") {
+    const win = windowEndingAt(seriesMap, anchorPeriod, 1, step);
+    if (!win) return null;
+    const v = win[0].value;
+    return roundSmooth(method === "latest_per_month" ? v / 3 : v);
+  }
   if (method === "ma3") {
+    if (periodsPerYear !== 12) return null; // a 3-month average needs monthly prints
     const win = windowEndingAt(seriesMap, anchorPeriod, 3, step);
     if (!win) return null;
     const avg = movingAverage3(win.map((p) => p.value));
     return avg == null ? null : roundSmooth(avg);
   }
   if (method === "ann3m_mom") {
-    const win = windowEndingAt(seriesMap, anchorPeriod, 3, step);
+    const win = windowEndingAt(seriesMap, anchorPeriod, n3m, step);
     if (!win) return null;
-    const ann = annualized3mFromMom(win.map((p) => p.value), { periodsPerYear });
+    const ann = annualized3mFromMom(win.map((p) => p.value), { periodsPerYear, window: n3m });
     return ann == null ? null : roundSmooth(ann);
   }
   if (method === "ann3m_index") {
-    const win = windowEndingAt(seriesMap, anchorPeriod, 4, step);
+    // level now vs level 3 months earlier: 4 monthly points or 2 quarterly points
+    const win = windowEndingAt(seriesMap, anchorPeriod, n3m + 1, step);
     if (!win) return null;
-    const ann = annualized3mFromIndex(win.map(indexLevel));
-    return ann == null ? null : roundSmooth(ann);
+    const levels = win.map(indexLevel);
+    const cur = levels[levels.length - 1];
+    const lag = levels[0];
+    if (!Number.isFinite(cur) || !Number.isFinite(lag) || lag === 0) return null;
+    return roundSmooth((Math.pow(cur / lag, 4) - 1) * 100);
   }
   return null;
 }

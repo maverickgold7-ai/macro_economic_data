@@ -83,16 +83,17 @@ export interface AnnualizeWindowOpts {
 }
 
 /**
- * Compound the last N period-on-period % prints and annualize.
- * Monthly (wages, CPI): window=3, periodsPerYear=12 → exponent 4.
- * Quarterly (EA wages): window=3, periodsPerYear=4 → exponent 4/3.
+ * Compound the period-on-period % prints covering the last 3 months and annualize.
+ * Monthly: window = 3 prints, exponent 12/3 = 4.
+ * Quarterly: window = 1 print (one quarter is 3 months), exponent 4.
+ * (Compounding 3 quarterly prints would be a 9-month rate, not comparable with monthly rows.)
  */
 export function annualized3mFromMom(
   momPcts: number[],
   opts: AnnualizeWindowOpts = {}
 ): number | null {
-  const window = opts.window ?? 3;
   const periodsPerYear = opts.periodsPerYear ?? 12;
+  const window = opts.window ?? Math.max(1, Math.round(periodsPerYear / 4));
   if (momPcts.length < window) return null;
   const m = momPcts.slice(-window);
   if (m.some((v) => !Number.isFinite(v))) return null;
@@ -110,6 +111,11 @@ export function annualized3mFromIndex(levels: number[]): number | null {
   const lag3 = levels[levels.length - 4]!;
   if (!Number.isFinite(cur) || !Number.isFinite(lag3) || lag3 === 0) return null;
   return (Math.pow(cur / lag3, 4) - 1) * 100;
+}
+
+/** Number of prints covering 3 months: 3 for monthly, 1 for quarterly. */
+export function printsPer3m(periodsPerYear: number): number {
+  return Math.max(1, Math.round(periodsPerYear / 4));
 }
 
 /** Pick index level: raw_value when present (YoY metrics store the index there). */

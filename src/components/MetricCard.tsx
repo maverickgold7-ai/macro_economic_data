@@ -111,8 +111,8 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
                 <span
                   className={clsx(
                     "font-medium",
-                    surpriseTone_ === "good" && "text-[var(--up)]",
-                    surpriseTone_ === "bad" && "text-[var(--down)]"
+                    surpriseTone_ === "dovish" && "text-[var(--up)]",
+                    surpriseTone_ === "hawkish" && "text-[var(--down)]"
                   )}
                 >
                   {formatDelta(metric.surprise, metric.unit)} surprise

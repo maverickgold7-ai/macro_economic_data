@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data";
 
@@ -22,7 +23,7 @@ export async function fetchEurostatSeries(
     ...filters,
   });
   const url = `${BASE}/${dataset}?${params}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Accept: "application/json", "User-Agent": "macro-economy-tracker/1.0" },
   });
   if (!res.ok) throw new Error(`Eurostat ${res.status} for ${dataset}`);

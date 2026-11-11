@@ -199,7 +199,8 @@ export const INVESTING_EVENT_RULES: InvestingEventRule[] = [
   },
   { metricId: "us-jolts-openings", currencies: ["USD"], pattern: /\bjolts\b.*opening|job openings\b/ },
   { metricId: "us-jolts-quits", currencies: ["USD"], pattern: /\bjolts\b.*quit|quits rate\b/ },
-  { metricId: "us-jolts-hires", currencies: ["USD"], pattern: /\bjolts\b.*hire|hires\b/ },
+  // "JOLTS Hires" on Investing is a level (e.g. 5.4M); the catalog's us-jolts-hires is the hires
+  // RATE (JTSHIR, %), so the two cannot be compared and are deliberately not mapped.
   { metricId: "us-jolts-layoffs", currencies: ["USD"], pattern: /\bjolts\b.*layoff|layoffs?\b.*discharges/ },
   {
     metricId: "us-initial-claims",
@@ -509,11 +510,9 @@ export const INVESTING_EVENT_RULES: InvestingEventRule[] = [
  */
 export const INVESTING_TO_CATALOG_SCALE: Record<string, number> = {
   "us-nfp": 0.001,
-  "us-initial-claims": 0.001,
-  "us-continuing-claims": 0.001,
+  // claims: catalog unit is persons (ICSA/CCSA) and "220K" parses to 220000 -> scale 1 (default)
   "us-adp-change": 0.001,
   "us-jolts-openings": 0.001,
-  "us-jolts-hires": 0.001,
   "us-housing-starts": 0.001,
   "us-building-permits": 0.001,
   "us-payrolls-level": 0.001,
@@ -523,10 +522,11 @@ export function investingToCatalogScale(metricId: string): number {
   return INVESTING_TO_CATALOG_SCALE[metricId] ?? 1;
 }
 
+// EUR is shared by the euro area and every member state, so it cannot identify a country on its
+// own: an EUR event without a country hint is "OTHER" (never silently attached to EA metrics).
 const CURRENCY_TO_COUNTRY: Record<string, CalendarCountry> = {
   USD: "US",
   GBP: "UK",
-  EUR: "EA",
   AUD: "AU",
 };
 
@@ -542,7 +542,7 @@ export function normalizeCalendarCountry(
   if (c === "IT" || c === "ITA" || c === "ITALY") return "IT";
   if (c === "ES" || c === "ESP" || c === "SPAIN") return "ES";
   if (c === "AU" || c === "AUS" || c === "AUSTRALIA") return "AU";
-  if (c === "EA" || c === "EU" || c === "EZ" || c === "EMU" || c === "EUROZONE" || c === "EURO AREA")
+  if (c === "EA" || c === "EU" || c === "EZ" || c === "EMU" || c === "EUROZONE" || c === "EURO ZONE" || c === "EURO AREA")
     return "EA";
 
   const cur = (currency || "").toUpperCase().trim();

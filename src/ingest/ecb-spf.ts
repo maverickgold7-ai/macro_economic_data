@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const BASE = "https://data-api.ecb.europa.eu/service/data";
 
@@ -23,7 +24,7 @@ export async function fetchEcbSpfHicp1y(): Promise<RawPoint[]> {
 export async function fetchEcbSpfSeries(series: EcbSpfSeries): Promise<RawPoint[]> {
   const path = SPF_PATHS[series];
   const url = `${BASE}/${path}?format=csvdata`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Accept: "text/csv", "User-Agent": "macro-economy-tracker/1.0" },
   });
   if (!res.ok) throw new Error(`ECB SPF ${series} ${res.status}`);
@@ -32,7 +33,7 @@ export async function fetchEcbSpfSeries(series: EcbSpfSeries): Promise<RawPoint[
 
 export async function fetchEcbCesInflation1y(): Promise<RawPoint[]> {
   const url = `${BASE}/CES/M.Z18.ALL.T.C1120.NUM_VAR.WM?format=csvdata`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Accept: "text/csv", "User-Agent": "macro-economy-tracker/1.0" },
   });
   if (!res.ok) throw new Error(`ECB CES ${res.status}`);

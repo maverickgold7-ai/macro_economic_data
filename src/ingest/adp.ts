@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * Live ADP National Employment Report via the site's production JSON feed
@@ -18,7 +19,7 @@ export async function fetchAdpNational(): Promise<{
   let lastErr = "";
   for (const base of bases) {
     try {
-      const res = await fetch(`${base}/ner_production.json`, {
+      const res = await fetchWithTimeout(`${base}/ner_production.json`, {
         headers: {
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0 (compatible; macro-economy-tracker/1.0)",
@@ -71,7 +72,7 @@ export async function fetchAdpNational(): Promise<{
         ? rel!
         : `https://adpemploymentreport.com/${rel!.replace(/^\//, "")}`;
       const hist = await (
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           headers: { Accept: "application/json", "User-Agent": "macro-economy-tracker/1.0" },
         })
       ).json();

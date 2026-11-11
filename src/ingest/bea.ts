@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 const BEA_URL = "https://apps.bea.gov/api/data";
 
@@ -26,7 +27,7 @@ export async function fetchBeaNipa(
     ResultFormat: "JSON",
   });
 
-  const res = await fetch(`${BEA_URL}?${params}`, {
+  const res = await fetchWithTimeout(`${BEA_URL}?${params}`, {
     headers: { "User-Agent": "macro-economy-tracker/1.0", Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`BEA HTTP ${res.status}`);

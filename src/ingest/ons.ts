@@ -1,6 +1,7 @@
 import type { RawPoint } from "./transforms";
 import { fetchOnsPayeEmploymentChange, fetchOnsPayeMedianPayLevel } from "./ons-paye-rti";
 import { fetchUkLabourMarketBulletinUe } from "./ons-labour-bulletin";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * ONS public CSV generator — more reliable than the legacy JSON API.
@@ -76,7 +77,7 @@ async function fetchOnsCsvSeries(uri: string, seriesId: string): Promise<RawPoin
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, 2500 * attempt));
     }
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         Accept: "text/csv",
         "User-Agent": "macro-economy-tracker/1.0",

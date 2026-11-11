@@ -1,4 +1,5 @@
 import type { RawPoint } from "./transforms";
+import { fetchWithTimeout } from "@/lib/http";
 
 /**
  * Scrape latest UK Producer Price Inflation bulletin headlines.
@@ -9,7 +10,7 @@ export async function fetchOnsPpiBulletin(): Promise<{
   outputYoy: RawPoint | null;
   period: string | null;
 }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     "https://www.ons.gov.uk/economy/inflationandpriceindices/bulletins/producerpriceinflation/latest",
     {
       headers: {

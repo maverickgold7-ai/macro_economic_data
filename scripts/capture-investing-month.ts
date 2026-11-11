@@ -12,6 +12,9 @@ import { INVESTING_BROWSER_CAPTURE_JS } from "./investing-browser-capture";
 import { isoToPickerDate } from "./investing-date-format";
 import { launchInvestingContext, parseArgs } from "./investing-browser-session";
 
+/** Shape of the capture dump written by the injected Investing.com script. */
+type InvestingDump = { rows?: Array<Record<string, unknown>>; range?: { from?: string; to?: string } };
+
 async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));
   const from = positional[0] ?? "2026-09-01";
@@ -40,7 +43,8 @@ async function main() {
         eval(js);
         // @ts-expect-error injected
         const capture = await __invCaptureMonth(fromPicker, toPicker, rangeFrom, rangeTo);
-        return { result: capture, dump: window.__invLastDump };
+        // __invLastDump is set by the injected capture script; typed here so `next build` compiles
+        return { result: capture, dump: (window as unknown as { __invLastDump?: InvestingDump }).__invLastDump };
       },
       {
         js: INVESTING_BROWSER_CAPTURE_JS,

@@ -15,7 +15,8 @@
     "simulate:investing": "tsx scripts/simulate-investing-import.ts",
     "audit:surprise": "tsx scripts/audit-investing-surprise.ts",
     "remap:investing": "tsx scripts/remap-investing.ts",
-    "db:push": "tsx -e \"import { ensureSchema, seedCatalog } from './src/ingest/pipeline'; ensureSchema().then(seedCatalog).then(() => console.log('ok'))\""
+    "db:push": "tsx -e \"import { ensureSchema, seedCatalog } from './src/ingest/pipeline'; ensureSchema().then(seedCatalog).then(() => console.log('ok'))\"",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
