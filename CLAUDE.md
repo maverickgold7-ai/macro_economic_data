@@ -43,3 +43,10 @@ npm run dev                   # http://localhost:3000
 1. Run `npm test`.
 2. If `data/macro.db` is missing, say so and suggest `npm run backfill`.
 3. If the user works on rolls, check that `../rolls/run_pipeline.py status` finds `macro.db` ("Macro events DB: found").
+
+## Cloud sessions (Claude Code on the web)
+- Node's built-in `fetch` ignores the session's HTTPS proxy. Prefix ingest and build commands with
+  `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt` (Node >= 22.21), otherwise every
+  fetch fails with `getaddrinfo ENOTFOUND` and `next build` fails in `next/font`.
+- Eurostat (ec.europa.eu) has returned a proxy `tcp_error` from the cloud egress, leaving euro-area
+  Eurostat series empty there. That is a network limit; do not substitute other sources or values.
